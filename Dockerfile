@@ -1,25 +1,25 @@
-# استفاده از نسخه سبک پایتون
-FROM python:3.9-slim
+FROM python:3.9
 
-# نصب FFmpeg (حیاتی برای ترکیب صدا و تصویر)
+# نصب FFmpeg و سایر وابستگی‌های سیستمی
 RUN apt-get update && \
-    apt-get install -y ffmpeg && \
+    apt-get install -y ffmpeg curl && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# تنظیم دایرکتوری کاری
 WORKDIR /app
 
-# کپی کردن فایل نیازمندی‌ها و نصب آن‌ها
+# آپدیت کردن پیپ
+RUN pip install --upgrade pip
+
 COPY requirements.txt .
+# نصب وابستگی‌ها (به جز yt-dlp که جداگانه نصب می‌کنیم)
 RUN pip install --no-cache-dir -r requirements.txt
 
-# کپی کردن کل پروژه به سرور
-COPY . .
+# نصب آخرین نسخه yt-dlp مستقیماً از گیت‌هاب (بسیار مهم برای دور زدن بلاک)
+RUN pip install --force-reinstall https://github.com/yt-dlp/yt-dlp/archive/master.zip
 
-# ایجاد پوشه دانلود موقت
+COPY . .
 RUN mkdir -p temp_downloads
 
-# دستور اجرای برنامه با Gunicorn (وب‌سرور قوی برای پروداکشن)
-# Render پورت را به صورت متغیر محیطی $PORT ارسال می‌کند
-CMD gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120
+# افزایش تایم‌اوت به ۳۰۰ ثانیه
+CMD gunicorn app:app --bind 0.0.0.0:$PORT --timeout 300
