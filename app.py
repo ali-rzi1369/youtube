@@ -4,81 +4,82 @@ import yt_dlp
 import os
 import uuid
 
-# ایجاد اپلیکیشن Flask
 app = Flask(__name__)
-# فعال‌سازی CORS برای اجازه دادن به درخواست‌ها از فایل HTML شما
 CORS(app)
 
-# پوشه‌ای برای ذخیره موقت فایل‌ها
 DOWNLOAD_FOLDER = 'temp_downloads'
 if not os.path.exists(DOWNLOAD_FOLDER):
     os.makedirs(DOWNLOAD_FOLDER)
 
 @app.route('/download', methods=['GET'])
 def download_video():
-    # دریافت پارامترها از آدرس
     url = request.args.get('url')
-    quality = request.args.get('quality', '720p') # پیش‌فرض 720p
+    quality = request.args.get('quality', '720p')
 
     if not url:
         return jsonify({'error': 'لینک ویدئو وارد نشده است'}), 400
 
     try:
-        # تبدیل فرمت کیفیت انتخابی (مثلاً 1080p) به عدد (1080)
         height_value = quality.replace('p', '')
-        
-        # تنظیم نام فایل یکتا برای جلوگیری از تداخل درخواست‌های همزمان
         unique_id = str(uuid.uuid4())
         
-        # تنظیمات yt-dlp
+        # تنظیمات جدید برای جلوگیری از بلاک شدن
         ydl_opts = {
-            # فرمت: بهترین ویدئو با ارتفاع کمتر یا مساوی کیفیت درخواستی + بهترین صدا
             'format': f'bestvideo[height<={height_value}]+bestaudio/best[height<={height_value}]/best',
-            # فرمت خروجی نهایی همیشه MP4 باشد
             'merge_output_format': 'mp4',
-            # محل ذخیره فایل
             'outtmpl': f'{DOWNLOAD_FOLDER}/{unique_id}.%(ext)s',
-            # خاموش کردن لاگ‌های اضافی
             'quiet': True,
             'no_warnings': True,
+            # تنظیمات مهم ضد شناسایی:
+            'nocheckcertificate': True,
+            'geo_bypass': True,
+            'source_address': '0.0.0.0',
+            # شبیه‌سازی درخواست از طریق کلاینت اندروید (معمولاً کمتر بلاک می‌شود)
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios']
+                }
+            },
+            # اضافه کردن هدرهای مرورگر واقعی
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9',
+            }
         }
 
         final_filename = None
 
-        # شروع دانلود
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # استخراج اطلاعات ویدئو
-            info = ydl.extract_info(url, download=True)
-            
-            # پیدا کردن مسیر فایل نهایی
-            # نکته: اگرچه outtmpl دادیم، اما اکستنشن ممکن است تغییر کند
-            # پس فایل را در پوشه پیدا می‌کنیم
+            try:
+                info = ydl.extract_info(url, download=True)
+            except yt_dlp.utils.DownloadError as e:
+                # اگر باز هم خطا داد، پیام دقیق‌تری برگردانیم
+                print(f"YouTube DL Error: {e}")
+                if "Sign in" in str(e) or "unavailable" in str(e):
+                    return jsonify({'error': 'سرور توسط یوتیوب محدود شده است. لطفاً دقایقی دیگر تلاش کنید.'}), 403
+                raise e
+
             temp_filename = ydl.prepare_filename(info)
-            # چون مرج به mp4 اجباری شده، اکستنشن نهایی mp4 است
             final_path = os.path.splitext(temp_filename)[0] + '.mp4'
             
             if os.path.exists(final_path):
                 final_filename = final_path
             else:
-                # اگر مرج لازم نبود و فایل اصلی دانلود شد
                 final_filename = temp_filename
 
-        # مسیر مطلق فایل برای ارسال
         abs_path = os.path.abspath(final_filename)
-        video_title = info.get('title', 'video').replace('/', '_') # حذف کاراکترهای غیرمجاز
+        # ایمن‌سازی نام فایل برای دانلود
+        video_title = "".join([c for c in info.get('title', 'video') if c.isalnum() or c in (' ', '-', '_')]).strip()
 
-        # تابعی برای حذف فایل بعد از ارسال به کاربر (برای پر نشدن هارد سرور)
         @after_this_request
         def remove_file(response):
             try:
                 if os.path.exists(abs_path):
                     os.remove(abs_path)
-                    print(f"فایل موقت حذف شد: {abs_path}")
             except Exception as e:
-                print(f"خطا در حذف فایل: {e}")
+                print(f"Error removing file: {e}")
             return response
 
-        # ارسال فایل به کاربر
         return send_file(
             abs_path, 
             as_attachment=True, 
@@ -87,10 +88,8 @@ def download_video():
         )
 
     except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({'error': 'دانلود انجام نشد. لینک یا سرور مشکل دارد.'}), 500
+        print(f"General Error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    # اجرای سرور روی پورت 3000
-    print("سرور روی پورت 3000 در حال اجراست...")
     app.run(debug=True, port=3000)
